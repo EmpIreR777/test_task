@@ -1,0 +1,61 @@
+x-app-base: &app-base
+  build:
+    context: ./backend
+    dockerfile: Dockerfile
+  env_file:
+    - .env.dev
+  depends_on:
+    backend-db:
+      condition: service_healthy
+    backend-redis:
+      condition: service_healthy
+  restart: unless-stopped
+
+services:
+  backend:
+    <<: *app-base
+    image: backend:latest
+    container_name: backend
+    command: ["uvicorn", "src.app:app", "--host", "0.0.0.0", "--reload", "--port", "8000"]
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/backend
+
+  backend-worker:
+    <<: *app-base
+    image: backend-worker:latest
+    container_name: backend-worker
+    command: ["taskiq", "worker", "src.tsk.broker:mk_broker", "src.tsk.tasks"]
+
+  backend-scheduler:
+    <<: *app-base
+    image: backend-scheduler:latest
+    container_name: backend-scheduler
+    command: ["taskiq", "scheduler", "src.tsk.schedulers:mk_scheduler", "src.tsk.tasks"]
+
+  backend-db:
+    image: postgres:16-alpine
+    container_name: backend-db
+    ports:
+      - "5432:5432"
+    env_file: ".env.dev"
+    volumes:
+      - backend-db-volume:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend-redis:
+    image: redis:7-alpine
+    container_name: backend-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  backend-db-volume:
